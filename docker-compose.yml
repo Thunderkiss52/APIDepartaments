@@ -1,0 +1,52 @@
+x-api-env: &api-env
+  APP_PORT: ${APP_PORT:-8080}
+  DB_HOST: ${DB_HOST:-postgres}
+  DB_PORT: ${DB_PORT:-5432}
+  DB_USER: ${DB_USER:-postgres}
+  DB_PASSWORD: ${DB_PASSWORD:-postgres}
+  DB_NAME: ${DB_NAME:-org_structure}
+  DB_SSLMODE: ${DB_SSLMODE:-disable}
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${DB_NAME:-org_structure}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-org_structure}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+  migrate:
+    image: golang:1.25
+    working_dir: /app
+    volumes:
+      - .:/app
+    environment: *api-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command:
+      - bash
+      - -lc
+      - >
+        until : </dev/tcp/$DB_HOST/$DB_PORT; do
+          echo "waiting for postgres...";
+          sleep 2;
+        done;
+        /usr/local/go/bin/go run github.com/pressly/goose/v3/cmd/goose@v3.14.0
+        -dir ./migrations postgres
+        "host=$DB_HOST port=$DB_PORT user=$DB_USER password=$DB_PASSWORD dbname=$DB_NAME sslmode=$DB_SSLMODE"
+        up
+  app:
+    build: .
+    environment: *api-env
+    dns:
+      - 127.0.0.11
+    ports:
+      - "${HOST_PORT:-8080}:${APP_PORT:-8080}"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
